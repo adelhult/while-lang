@@ -1,7 +1,14 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Main where
 
+import Control.Applicative (Applicative (..))
+import Control.Monad (when)
+import Control.Monad.Identity (Identity (runIdentity))
+import Control.Monad.State (MonadState (get, put), StateT, runStateT)
+import Control.Monad.Writer (MonadWriter (tell), WriterT, execWriterT)
+import Data.Function ((&))
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Set (Set)
@@ -32,11 +39,19 @@ instance Show State where
 emptyState :: State
 emptyState = State Map.empty
 
-getVar :: Variable -> State -> Maybe Number
-getVar x (State state) = Map.lookup x state
+newtype Interpreter a
+  = Interpreter {runInterpreter :: WriterT String (StateT State Identity) a}
+  deriving (Functor, Applicative, Monad, MonadState State, MonadWriter String)
 
-assignVar :: Variable -> Number -> State -> State
-assignVar x value (State state) = State $ Map.insert x value state
+getVar :: Variable -> Interpreter (Maybe Number)
+getVar x = do
+  State st <- get
+  return $ Map.lookup x st
+
+assignVar :: Variable -> Number -> Interpreter ()
+assignVar x value = do
+  State s <- get
+  put $ State $ Map.insert x value s
 
 -- | An extra pass to search for variables (helpful when init. a state)
 findVariables :: Stmt -> Set Variable
@@ -70,40 +85,48 @@ findVariables stmt = case stmt of
       LessEq lhs rhs -> binOp lhs rhs
     binOp lhs rhs = searchExpr lhs `Set.union` searchExpr rhs
 
--- TODO: Would be nice to use a State and Except monad transformer
-evalExpr :: Expr a -> State -> a
-evalExpr expr state = case expr of
+evalExpr :: Expr a -> Interpreter a
+evalExpr expr = case expr of
   -- Arithmetic expressions
-  NumLit n -> n
-  Var x -> case getVar x state of
-    Just n -> n
-    Nothing -> error $ "Variable '" ++ x ++ "' not found"
-  Add lhs rhs -> evalExpr lhs state + evalExpr rhs state
-  Mul lhs rhs -> evalExpr lhs state * evalExpr rhs state
-  Sub lhs rhs -> evalExpr lhs state - evalExpr rhs state
+  NumLit n -> return n
+  Var x -> do
+    value <- getVar x
+    case value of
+      Just n -> return n
+      -- Should be unreachable since we always init the state
+      Nothing -> error $ "Variable '" ++ x ++ "' not found"
+  Add lhs rhs -> liftA2 (+) (evalExpr lhs) (evalExpr rhs)
+  Mul lhs rhs -> liftA2 (*) (evalExpr lhs) (evalExpr rhs)
+  Sub lhs rhs -> liftA2 (-) (evalExpr lhs) (evalExpr rhs)
   -- Boolean expressions
-  TrueLit -> True
-  FalseLit -> False
-  Eq lhs rhs -> evalExpr lhs state == evalExpr rhs state
-  LessEq lhs rhs -> evalExpr lhs state <= evalExpr rhs state
-  And lhs rhs -> evalExpr lhs state && evalExpr rhs state
-  Neg b -> not (evalExpr b state)
+  TrueLit -> return True
+  FalseLit -> return False
+  Eq lhs rhs -> liftA2 (==) (evalExpr lhs) (evalExpr rhs)
+  LessEq lhs rhs -> liftA2 (<=) (evalExpr lhs) (evalExpr rhs)
+  And lhs rhs -> liftA2 (&&) (evalExpr lhs) (evalExpr rhs)
+  Neg b -> not <$> evalExpr b
 
-evalStmt :: Stmt -> State -> State
-evalStmt stmt state = case stmt of
-  Assign x value -> assignVar x (evalExpr value state) state
-  Skip -> state
-  Sequence ss -> foldl (flip evalStmt) state ss
-  If cond yes no ->
-    if evalExpr cond state
-      then evalStmt yes state
-      else evalStmt no state
-  While cond loop ->
-    if evalExpr cond state
-      -- run the loop then repeat while stmt again using the new state
-      then evalStmt stmt (evalStmt loop state)
-      -- or just do nothing
-      else state
+evalStmt :: Stmt -> Interpreter ()
+evalStmt stmt = case stmt of
+  Assign x expr -> do
+    tell ""
+    value <- evalExpr expr
+    assignVar x value
+  Skip -> return ()
+  Sequence ss -> mapM_ evalStmt ss
+  If cond yes no -> do
+    cond' <- evalExpr cond
+    if cond'
+      then evalStmt yes
+      else evalStmt no
+  While cond loop -> do
+    cond' <- evalExpr cond
+    when
+      cond'
+      ( do
+          evalStmt loop
+          evalStmt stmt
+      )
 
 main :: IO ()
 main = do
@@ -124,9 +147,14 @@ run name src = case parseStmt name src of
   Right program ->
     -- find all variables and create an init. state
     let vars = findVariables program
-        state = foldl (\s var -> assignVar var 0 s) emptyState vars
-     in -- finally evaluate the program and print the resulting state
-        Right $ evalStmt program state
+        state = foldl (\(State s) var -> State $ Map.insert var 0 s) emptyState vars
+        -- run and unpack the interpreter
+        (_log, finalState) =
+          runInterpreter (evalStmt program)
+            & execWriterT
+            & flip runStateT state
+            & runIdentity
+     in Right finalState
 
 repl :: IO ()
 repl = do
