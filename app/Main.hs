@@ -27,7 +27,7 @@ newtype State = State (Map Variable Number)
 instance Show State where
   show (State state) =
     unlines $
-      map (\(k, v) -> k ++ ": " ++ show v) (Map.toList state)
+      map (\(k, v) -> k ++ " ↦ " ++ show v) (Map.toList state)
 
 emptyState :: State
 emptyState = State Map.empty
