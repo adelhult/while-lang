@@ -72,7 +72,7 @@ keyword :: Text -> Parser Text
 keyword word = lexeme (string word <* notFollowedBy alphaNumChar)
 
 keywords :: [String]
-keywords = ["if", "then", "else", "while", "skip", "true", "false"]
+keywords = ["if", "then", "else", "while", "do", "skip", "true", "false"]
 
 ident :: Parser String
 ident = (lexeme . try) (p >>= check)
@@ -161,7 +161,7 @@ pWhile = do
   let _ = trace "while"
   _ <- keyword "while"
   cond <- pExprBool
-  _ <- keyword "then"
+  _ <- keyword "do"
   loop <- pStmt
   return (While cond loop)
 
