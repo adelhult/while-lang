@@ -86,6 +86,9 @@ ident = (lexeme . try) (p >>= check)
 binary :: Text -> (a -> a -> a) -> Operator Parser a
 binary name f = InfixL (f <$ symbol name)
 
+unary :: Text -> (a -> a) -> Operator Parser a
+unary name f = Prefix (f <$ symbol name)
+
 pNumber :: Parser (Expr Number)
 pNumber = NumLit <$> lexeme L.decimal
 
@@ -107,7 +110,7 @@ pExprNum :: Parser (Expr Number)
 pExprNum = makeExprParser pTermNum operatorTableNum
 
 operatorTableBool :: [[Operator Parser (Expr Bool)]]
-operatorTableBool = [[binary "&&" And]]
+operatorTableBool = [[unary "!" Neg], [binary "&&" And]]
 
 pTermBool :: Parser (Expr Bool)
 pTermBool =
