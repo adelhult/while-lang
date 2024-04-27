@@ -39,6 +39,9 @@ instance Show State where
 emptyState :: State
 emptyState = State Map.empty
 
+-- Note: this Interpreter monad is rather overkill, especially since I'm not
+-- even using the Writer for anything. But it was a good exercise to get more
+-- used to using monad transformers.
 newtype Interpreter a
   = Interpreter {runInterpreter :: WriterT String (StateT State Identity) a}
   deriving (Functor, Applicative, Monad, MonadState State, MonadWriter String)
